@@ -460,7 +460,7 @@ class Subscriber(Discoverable[EntityType]):
         return config | topics
 
 
-class ClimateSubscriber(Discoverable[EntityType]):
+class GasBoilerSubscriber(Discoverable[EntityType]):
     """
     Specialized subclass that listens to commands coming from an MQTT topic
     """
@@ -471,10 +471,10 @@ class ClimateSubscriber(Discoverable[EntityType]):
         self,
         settings: Settings[EntityType],
         command_callback: Callable[[mqtt.Client, T, mqtt.MQTTMessage], Any],
-        user_data: T = None,
     ) -> None:
         """
         Entity that listens to commands from an MQTT topic.
+
         Args:
             settings: Settings for the entity we want to create in Home Assistant.
             See the `Settings` class for the available options.
@@ -483,14 +483,13 @@ class ClimateSubscriber(Discoverable[EntityType]):
         """
 
         # Callback invoked when the MQTT connection is established
-        def on_client_connected(client: mqtt.Client, *args):
-            # Publish this button in Home Assistant
+        def on_client_connected(client: mqtt.Client, *_):
             # Subscribe to the command topic
             result_mode, _ = client.subscribe(self._mode_command_topic, qos=1)
             result_temperature, _ = client.subscribe(self._temperature_command_topic, qos=1)
-
+            
             if result_mode is not mqtt.MQTT_ERR_SUCCESS:
-                raise RuntimeError("Error subscribing to MQTT mode command topic")
+                raise RuntimeError("Error subscribing to MQTT command topic")
 
         # Invoke the parent init
         super().__init__(settings, on_client_connected)
@@ -498,18 +497,35 @@ class ClimateSubscriber(Discoverable[EntityType]):
         self._mode_command_topic = f"{self._settings.mqtt.state_prefix}/{self._entity_topic}/mode_command"
         self._mode_state_topic = f"{self._settings.mqtt.state_prefix}/{self._entity_topic}/mode_state"
         self._current_temperature_topic = f"{self._settings.mqtt.state_prefix}/{self._entity_topic}/current_temperature"
-        self._temperature_command_topic = f"{self._settings.mqtt.state_prefix}/{self._entity_topic}/temperature_command"
-        self._temperature_state_topic = f"{self._settings.mqtt.state_prefix}/{self._entity_topic}/temperature_state"
+        self._temperature_command_topic = f"{self._settings.mqtt.state_prefix}/{self._entity_topic}/_temperature_command"
+        self._temperature_state_topic = f"{self._settings.mqtt.state_prefix}/{self._entity_topic}/_temperature_state"
+
+
+        # Register the user-supplied callback function
+        self.mqtt_client.message_callback_add(self._mode_command_topic, command_callback)
 
         # Register the user-supplied callback function with its user_data
-        self.mqtt_client.user_data_set(user_data)
-        self.mqtt_client.on_message = command_callback
+        #self.mqtt_client.user_data_set(user_data)
+        #self.mqtt_client.on_message = command_callback
 
-        # Manually connect the MQTT client
-        self._connect_client()
+        if self._settings.mqtt.client:
+            # externally created MQTT client is used
+            if self.mqtt_client.is_connected():
+                # MQTT client is already connected, therefor explicitly
+                # subscribe to the command topic
+                on_client_connected(self.mqtt_client)
+            else:
+                # externally created MQTT client is not connected yet
+                # the 'on_connect' callback named 'on_client_connected'
+                # will subscribe to the command topic
+                # when the externally created MQTT client connects
+                pass
+        else:
+            # Manually connect the MQTT client
+            self._connect_client()
 
     def generate_config(self) -> dict[str, Any]:
-        """Override base config to add the command topic of this switch"""
+        """Override base config to add the command topic"""
         config = super().generate_config()
         # Add the MQTT command topic to the existing config object
         topics = {
@@ -532,3 +548,5 @@ class ClimateSubscriber(Discoverable[EntityType]):
             "temperature_state_topic": self._temperature_state_topic,
         }
         return config | topics
+
+
